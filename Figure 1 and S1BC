@@ -1,0 +1,302 @@
+# Evaluate Chief Complaint incidence by month
+
+library(tidyverse)
+library(broom)
+library(mgcv)
+library(ggeffects)
+library(patchwork)
+library(paletteer)
+
+# ED & UC admissions
+infile <- readRDS('./manuscript/source_data/ED_Admissions_ICD10s.rds')
+
+# One row per admit
+admit <- infile |>
+  distinct(ENC_ID, .keep_all = TRUE) |> 
+  select(ENC_ID, PAT_ID, CC, ED_ADMISSION_MONTH, ADMISSION_LOCATION)
+
+# CCs w/at least N admits
+top <- admit |> 
+  distinct(ENC_ID, .keep_all = TRUE) |> 
+  count(CC) |> 
+  slice_max(n >= 500) |> select(-n) |> # Require 500 observations
+  inner_join(admit, by = 'CC') # Rejoin data
+
+freqs <- top |> 
+  mutate(across(.cols = c('CC', 'ED_ADMISSION_MONTH'), as.factor)) |> 
+  group_by(CC, ED_ADMISSION_MONTH, .drop = FALSE) |> 
+  summarise(n = n()) |> 
+            #medStay = round(median(IP_STAY_DAYS + 1), digits = 2)) |>
+  ungroup() |> 
+  mutate(ED_ADMISSION_MONTH = as.numeric(ED_ADMISSION_MONTH)) |> 
+  left_join(days <- tibble(
+    ED_ADMISSION_MONTH = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'ED_ADMISSION_MONTH') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+# GAM month (add year) predictors of admission counts
+mod <- freqs %>%
+  nest(data = -CC) %>% 
+  mutate(fit = map(data, ~ gam(
+    MONTH_COUNT_ADM ~ s(ED_ADMISSION_MONTH, bs = "cc"), family = 'poisson',
+    method = "REML", data = .x)),
+    results = map(fit, glance),
+    rsq = map_dbl(fit, ~ summary(.)$r.sq),
+    reml = map_dbl(fit, ~ summary(.)$sp.criterion),
+    # Extract chi-square stat
+    month.p = map_dbl(fit, ~ summary(.)$s.table['s(ED_ADMISSION_MONTH)', 'p-value']),
+    # Marginal effect of month
+    mem = map(fit, ~ ggpredict(., terms = 'ED_ADMISSION_MONTH'))) %>%
+  select(-data, -fit) %>%
+  unnest(results) %>%
+  # FDR adjust pvals
+  mutate(across(.cols = c("month.p"),
+                ~p.adjust(.x, method = "BH", n = length(unique(freqs$CC))),
+                .names = "{.col}.BH"),
+         sig = ifelse(month.p.BH <= 0.01, "yes", "no")) %>%
+  # Marginal effects
+  unnest(mem) %>%
+  group_by(CC) %>%
+  mutate(pred_cntr = scale(predicted, scale = F), # Mean center at zero
+         pred_scale = scale(predicted, scale = T)) %>% ungroup () %>% # Mean center at zero, then scale
+  select(CC, ED_ADMISSION_MONTH = x, everything(), -group)
+
+# Plot
+labels <- mod %>% # Helper for labels
+  distinct(CC, .keep_all = TRUE) %>%
+  count(sig) |> 
+  mutate(sig= factor(sig, levels = c('yes', 'no')))
+
+pA <- ggplot(mod, aes(x = ED_ADMISSION_MONTH, y = pred_cntr, color = sig, 
+                      size = sig, group = CC)) + 
+  geom_line() +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  #guide = guide_legend(show.legend = FALSE)) +
+  scale_color_manual(values = c("purple", "dodgerblue"),
+                     labels = c(paste0("no (", labels$n[1], ")"),
+                                paste0("yes (", labels$n[2], ")")),
+                     guide = guide_legend(
+                       override.aes = list(size=1.5),
+                       title = "nonlinear (fdr < 0.01)",
+                       keywidth = 1,
+                       keyheight = 0.85,
+                       ncol = 2,
+                       order = 1)) +
+  scale_x_continuous(breaks = seq(1,12, by = 1),
+                     labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                                "aug", "sep", "oct", "nov", "dec"),
+                     guide = guide_axis(n.dodge = 2)) +
+  labs(x = "month", y = "admissions (zero centered)") +
+  theme_bw() +
+  theme(legend.position = 'top',
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+ggsave('./manuscript/figs//figS1B.pdf', pA, width = 3.1, height = 2.5)
+
+# Kmeans cluster monthly curves for fdr <= 0.01
+data <- mod  %>%
+  filter(sig == "yes") %>%
+  select(CC, ED_ADMISSION_MONTH, pred_scale) %>%
+  pivot_wider(names_from = ED_ADMISSION_MONTH, values_from = pred_scale)
+
+points <- data %>%
+  select(-c('CC'))
+
+# Explore different choices of k clusters
+set.seed(12345)
+kclusts <- 
+  tibble(k = 2:12) %>%
+  mutate(
+    kclust = map(k, ~kmeans(points, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, points)
+  )
+# Tidy summarizes on a per-cluster level
+clusters <- 
+  kclusts %>%
+  unnest(cols = c(tidied))
+
+# Augment adds the point classifications to the original data set
+assignments <- 
+  kclusts %>% 
+  unnest(cols = c(augmented))
+
+# Glance extracts a single-row summary
+clusterings <- 
+  kclusts %>%
+  unnest(cols = c(glanced))
+# Elbow plot
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point()
+
+# Select optimal value for k
+chosen_k <- kclusts %>%
+  filter(k == 6)
+
+# Extract clusters and centers 
+k_curves <- 
+  chosen_k %>%
+  select(augmented) %>%
+  unnest(cols = c(augmented)) %>%
+  bind_cols(data %>% select(CC)) %>%
+  pivot_longer(`1`:`12`, names_to = "month", values_to = "vals") %>%
+  rename(cluster = .cluster) %>%
+  # Factor level to order facets by peak season
+  mutate(cluster = factor(cluster, levels = c(5, 1, 4, 3, 6, 2)))
+
+# Seasonal CCs w/cluster designation
+## Check on this do i need to save it? Is it called somewhere else?
+saveRDS(k_curves |> distinct(CC, cluster), 
+          './ChiefComplaint/data/CC_SeasClstr.rds')
+
+k_centers <-
+  chosen_k %>%
+  unnest(cols = tidied) %>%
+  pivot_longer(`1`:`12`, names_to = "month", values_to = "vals")
+
+# Plot seasonal clusters
+# Facet names
+facets <- c(
+  `3` = "Summer",
+  `5` = "Winter",
+  `1` = "Fall-Spring",
+  `4` = "Spring-Summer",
+  `6` = "Fall&Spring",
+  `2` = "Winter mix")
+
+pB <- k_curves %>%
+  ggplot(aes(x = as.numeric(month), y = vals)) +
+  geom_line(aes(group = CC), color = "dodgerblue", linewidth = 0.25) +
+  geom_smooth(data = k_centers, 
+              aes(group = cluster), size = 0.7, se = FALSE,
+              alpha = 0.01, color = "orange") +
+  scale_x_continuous(breaks = seq(1,12, by = 1),
+                     labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                                "aug", "sep", "oct", "nov", "dec"),
+                     guide = guide_axis(n.dodge = 2)) +
+  labs(x = "month", y = "admissions (scaled)") +
+  facet_wrap(~cluster, nrow = 1, labeller = as_labeller(facets)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 7),
+        axis.text.y = element_text(size = 9),
+        axis.title.y = element_text(size = 13),
+        axis.title.x = element_blank(),
+        #strip.background = element_blank(),
+        strip.background = element_rect(fill = 'grey90'),
+        strip.text = element_text(size = 11),
+        panel.spacing.y = unit(-0.1, "lines"))
+
+# Peak:trough measures for seasonal CCs
+CCannot <- read_csv('./manuscript/source_data/ED_TopCCs.csv')
+ptr_ptd <- freqs |>
+  # Filter seasonal CCs
+  inner_join(k_curves |> distinct(CC, cluster), by = 'CC') |>
+  # Add Therapeutic Area annotation
+  left_join(CCannot, by = 'CC') |> 
+  group_by(CC) |> 
+  # Peak (avg top two months) and trough (bottom two months)
+  filter(!between(rank(MONTH_COUNT_ADM, ties.method = 'first'), 3, n()-2)) |>
+  arrange(desc(MONTH_COUNT_ADM), .by_group = TRUE) |> 
+  summarise(
+    SEASONAL_CLUSTER = cluster[1],
+    CC_AREA = AREA[1],
+    max = mean(MONTH_COUNT_ADM[1:2]),
+    min = mean(MONTH_COUNT_ADM[3:4])) %>%
+  # Add correction factor if min = 0, compute effect sizes
+  mutate(min = ifelse(min == 0, 1, min),
+         ptr = round(log10(max) - log10(min), digits = 2),
+         ptd = round(max - min, digits = 0)) |> 
+  ungroup ()
+
+# Write supp File S1
+#supp_tpm <- ptr_ptd |> 
+  #mutate(CLUSTER = case_when(
+    #SEASONAL_CLUSTER == 3 ~ "Summer",
+    #SEASONAL_CLUSTER == 5 ~ "Winter",
+    #SEASONAL_CLUSTER == 1 ~ "Fall-Spring",
+    #SEASONAL_CLUSTER == 4 ~ "Spring-Summer",
+    #SEASONAL_CLUSTER == 6 ~ "Fall&Spring",
+    #SEASONAL_CLUSTER == 2 ~ "Winter mix")) |> 
+  #select(CC = CC, SEASONAL_CLUSTER, MAX = max, MIN = min,
+         #PTR = ptr, PTD = ptd)
+
+# Join GAM model output for each CC
+#supp <- mod |> 
+  #distinct(CC, .keep_all = TRUE) |> 
+  #left_join(CCannot, by = 'CC') |> 
+  #select(CC = CC, AREA, GAM_df = df, GAM_AIC = AIC, GAM_BIC = BIC,
+         #GAM_reml = reml, GAM_dev = deviance, GAM_rsq = rsq, pval = month.p,
+         #fdr = month.p.BH) |> 
+  #left_join(supp_tpm, by = 'CC') |> 
+  #mutate(across(GAM_df:fdr, ~ round(., digits = 3)))
+#write_csv(supp, './')
+  
+# Plot effect sizes #
+pC <- ggplot(ptr_ptd, #|> 
+    #filter(SEASONAL_CLUSTER == 4), 
+    aes(ptr, ptd)) +
+  geom_point(aes(color = CC_AREA), shape = 15) +
+    scale_y_log10() +
+  #geom_text_repel(aes(label = CC)) +
+  scale_color_paletteer_d(
+    palette = 'ggthemes::calc', guide = guide_legend(
+      override.aes = list(size = 3.5),
+      title = element_blank(),
+      nrow = 1,
+      title.hjust = 0.5)) +
+  facet_wrap(~SEASONAL_CLUSTER, nrow = 1, scales = 'free_x', labeller = as_labeller(facets)) +
+  labs(x = 'peak/trough (log 10)',
+       y = 'peak-trough') +
+  theme_bw() +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    #strip.background = element_rect(fill = 'grey90'),
+    #strip.text = element_text(size = 12),
+    panel.spacing.y = unit(-0.1, "lines"),
+    axis.text.x = element_text(angle = 90, size = 6.5, hjust = 1, vjust = 0.5),
+    axis.text.y = element_text(size = 9),
+    axis.title.y = element_text(size = 13),
+    axis.title.x = element_text(size = 13),
+    legend.position = 'bottom',
+    legend.margin = margin(b = -9, l = -25),
+    legend.text = element_text(size = 11, margin = margin(l = -5)))
+comb2 <- pB + pC + plot_layout(ncol = 1)
+#ggsave('./manuscript/figs/Fig1.png', comb2, width = 8, height = 4)
+
+# Select CCs for single plots
+select <- c('Psych Evaluation', 'Suicidal', 'Migraine', 'Ankle Injury',
+            'Asthma', 'Flu', 'Bicycle crash', 'Possible Hand Foot Mouth Disease')
+pE <- freqs |>
+  filter(CC %in% select) |> 
+  mutate(CC = gsub("Possible Hand Foot Mouth Disease",
+                             "Possible HFMD", CC)) |> 
+  ggplot(aes(x = ED_ADMISSION_MONTH, y = MONTH_COUNT_ADM, group = CC)) + 
+  geom_line(color = 'grey25') +
+  # Add a smooth curve by fitting a GAM
+  geom_smooth(color = 'dodgerblue', formula = y ~ s(x, bs = "cc"), method = "gam") +
+  scale_size_manual(values = c(0.5, 0.15), guide = 'none') +
+  scale_x_continuous(breaks = seq(1,12, by = 1),
+                     labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                                "aug", "sep", "oct", "nov", "dec"),
+                     guide = guide_axis(n.dodge = 1)) +
+  facet_wrap(~CC, scales = 'free_y', nrow = 2) +
+  labs(y = "total admissions") +
+  theme_bw() +
+  theme(strip.text = element_text(size = 9),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 7, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 9))
+#ggsave('./manuscript/figs/figS1C.pdf', pE, width = 6.1, height = 2.5)
+
