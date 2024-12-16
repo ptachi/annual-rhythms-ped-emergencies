@@ -24,7 +24,7 @@ library(ggthemes)
 
 ```{r}
 
-setwd("C:/Users/TACNZ4/OneDrive - cchmc/Brazil seasonality data")
+
 
 meantemp= read.table("monthly temperature.txt", header=TRUE)
 
