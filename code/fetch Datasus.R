@@ -3,7 +3,7 @@ remotes::install_github("rfsaldanha/microdatasus")
 
 
 
-setwd("C:/Users/TACNZ4/OneDrive - cchmc/Datasus seasonality")
+
 library(microdatasus)
 
 
