@@ -61,8 +61,6 @@ library(ggeffects)
 library(patchwork)
 library(ggsci)
 
-setwd("C:/Users/TACNZ4/OneDrive - cchmc/Datasus seasonality")
-
 
 dados.sp=read_rds("dadossp.rds")
 dados.pe=read_rds("dadospe.rds")
