@@ -1,0 +1,296 @@
+---
+title: "Map Brazilian Locations"
+format: html
+editor: visual
+---
+
+```{r}
+library(ggplot2)
+library(geobr)
+library(dplyr)
+library(stringr)
+library(readxl)
+library(sf)
+library(tidyverse)
+library(ggrepel)
+library(ggtext)
+library(RColorBrewer)
+library(cowplot)
+
+
+```
+
+```{r}
+brasil <- read_country(year = 2020)
+
+sp<- read_municipality(code_muni = 3550308, 
+                 year=2020, showProgress = FALSE)
+poa<- read_municipality(code_muni = 	4314902, 
+                 year=2020, showProgress = FALSE)
+brasilia<- read_municipality(code_muni = 		5300108, 
+                 year=2020, showProgress = FALSE)
+recife<- read_municipality(code_muni = 		2611606, 
+                 year=2020, showProgress = FALSE)
+
+munic=rbind(sp, poa, brasilia, recife)
+munic.colors=c( "#FC8D62", "#8DA0CB", "#E78AC3","#66C2A5")
+
+
+brazil_map=ggplot() +
+  geom_sf(data=brasil)+
+   geom_sf(data=munic , fill=munic.colors, color=munic.colors, show.legend = TRUE)+
+    geom_label_repel(data=munic, aes(label=name_muni, geometry=geom), 
+    stat = "sf_coordinates",
+    force = 50,
+    nudge_x=10, direction="x", color=munic.colors)+
+  labs(x="Longitude", y="Latitude")+
+  theme_minimal()
+
+brazil_map
+```
+
+## Putting together the scaled plots and map
+
+Asthma
+
+```{r}
+library(tidyverse)
+library(broom)
+library(mgcv)
+library(ggeffects)
+library(patchwork)
+library(ggsci)
+
+setwd("C:/Users/TACNZ4/OneDrive - cchmc/Datasus seasonality")
+
+
+dados.sp=read_rds("dadossp.rds")
+dados.pe=read_rds("dadospe.rds")
+dados.df=read_rds("dadosdf.rds")
+dados.rs=read_rds("dadosrs.rds")
+
+brdata=rbind(dados.sp, dados.pe, dados.df, dados.rs)
+
+
+### Info about the variables in the files ("Convenções SIH RD"): https://github.com/rfsaldanha/microdatasus/wiki/Conven%C3%A7%C3%B5es-SIH-RD
+
+### Only São Paulo (code 355030), Brasilia (530010), Porto Alegre (431490) and Recife (261160) cities
+## MUNIC_MOV means the municipality were admission occurred. It uses these municipality from IBGE (only 6 digits)
+# Codes can be found here ("código do município): https://cidades.ibge.gov.br/
+brdata= brdata %>%
+  subset(MUNIC_MOV==c("355030", "530010", "431490", "261160")) 
+
+### Asthma ICDs - Choose all ICDs that have "J45"
+## DIAG_PRINC is the ICD10 code for the main diagnosis at admission
+asthmabr= brdata %>%
+  subset(str_detect(DIAG_PRINC, "J45"))
+
+### filter 0-18 y.o.
+## COD_IDADE is the measuring unit for age. 4=years, 3=months, 2=days
+# IDADE is age
+asthmabr= asthmabr %>%
+  subset((COD_IDADE=="4" & IDADE <=18)|(COD_IDADE=="3"))
+
+### Only emergencies
+## CAR_INT is the type of admission. "02" is urgency/emergency
+asthmabr= asthmabr %>%
+  subset(CAR_INT=="02")
+
+
+asthmabr <- asthmabr|>
+  select(MES_CMPT, ANO_CMPT, DIAG_PRINC,DT_INTER, DT_SAIDA, MUNIC_MOV)
+### MES_CMPT is the month admission occurred (format mm). ANO_CMPT is the year of admission (format yyyy),
+## DT_INTER is the date of admission (format yyyymmdd), DT_SAIDA is the date of discharge. 
+
+
+freqsbr.a <- asthmabr |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+# GAM month (add year) predictors of admission counts
+
+modbr.a <- freqsbr.a %>%
+  nest(data = -MUNIC_MOV) %>% 
+  mutate(fit = map(data, ~ gam(
+    MONTH_COUNT_ADM ~ s(MES_CMPT, bs = "cc"), family = 'poisson',
+    method = "REML", data = .x)),
+    results = map(fit, glance),
+    rsq = map_dbl(fit, ~ summary(.)$r.sq),
+    reml = map_dbl(fit, ~ summary(.)$sp.criterion),
+    # Extract chi-square stat
+    month.p = map_dbl(fit, ~ summary(.)$s.table['s(MES_CMPT)', 'p-value']),
+    # Marginal effect of month
+    mem = map(fit, ~ ggpredict(., terms = 'MES_CMPT'))) %>%
+  select(-data, -fit) %>%
+  unnest(results) %>%
+  # FDR adjust pvals
+  mutate(across(.cols = c("month.p"),
+                ~p.adjust(.x, method = "BH", n = length(unique(freqsbr.a$MUNIC_MOV))),
+                .names = "{.col}.BH"),
+         sig = ifelse(month.p.BH <= 0.01, "yes", "no")) %>%
+  # Marginal effects
+  unnest(mem) %>%
+  group_by(MUNIC_MOV) %>%
+  mutate(pred_cntr = scale(predicted, scale = F), # Mean center at zero
+         pred_scale = scale(predicted, scale = T)) %>% ungroup () %>% # Mean center at zero, then scale
+  select(MUNIC_MOV, MES_CMPT = x, everything(), -group)
+
+modbr.a$MES_CMPT=factor(modbr.a$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+
+pAsthma <- ggplot(modbr.a, aes(x = MES_CMPT, y = pred_scale, group=MUNIC_MOV,  color = MUNIC_MOV)) + 
+  geom_line(size=1) +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+   scale_color_brewer(palette="Set2", labels = c("Recife", "São Paulo", "Porto Alegre", "Brasília"),
+                     guide = guide_legend(
+                       override.aes = list(size=1.5),
+                       title = "Municipality",
+                       keywidth = 1,
+                       keyheight = 0.85,
+                       ncol = 2,
+                       order = 1)) +
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  labs(x = "month", y = "admissions \n (scaled and zero centered)") +
+  ggtitle("Asthma")+
+  theme_bw() +
+  theme(  title=element_text(size=10),
+    legend.position = 'top',
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+pAsthma
+
+```
+
+Mental Health
+
+```{r}
+### Mental Health ICDs - Choose all ICDs that have "F"
+mentalbr= brdata %>%
+  subset(str_detect(DIAG_PRINC, "F"))
+
+### filter 0-18y.o.
+mentalbr= mentalbr %>%
+  subset((COD_IDADE=="4" & IDADE <=18)|(COD_IDADE=="3"))
+
+### Only emergencies
+mentalbr= mentalbr %>%
+  subset(CAR_INT=="02")
+
+
+mentalbr <- mentalbr|>
+  select(MES_CMPT, ANO_CMPT, DIAG_PRINC,DT_INTER, DT_SAIDA, MUNIC_MOV)
+
+
+freqsbr.m <- mentalbr |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  #          medStay = round(median(IP_STAY_DAYS + 1), digits = 2)) |>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+# GAM month (add year) predictors of admission counts
+
+modbr.m <- freqsbr.m %>%
+  nest(data = -MUNIC_MOV) %>% 
+  mutate(fit = map(data, ~ gam(
+    MONTH_COUNT_ADM ~ s(MES_CMPT, bs = "cc"), family = 'poisson',
+    method = "REML", data = .x)),
+    results = map(fit, glance),
+    rsq = map_dbl(fit, ~ summary(.)$r.sq),
+    reml = map_dbl(fit, ~ summary(.)$sp.criterion),
+    # Extract chi-square stat
+    month.p = map_dbl(fit, ~ summary(.)$s.table['s(MES_CMPT)', 'p-value']),
+    sig.month= ifelse(month.p <= 0.01, "p<0.01",  ifelse(month.p <= 0.05, "p<0.05 and >0.01", "p>0.05")),
+    # Marginal effect of month
+    mem = map(fit, ~ ggpredict(., terms = 'MES_CMPT'))) %>%
+  select(-data, -fit) %>%
+  unnest(results) %>%
+  # FDR adjust pvals
+  mutate(across(.cols = c("month.p"),
+                ~p.adjust(.x, method = "BH", n = length(unique(freqsbr.m$MUNIC_MOV))),
+                .names = "{.col}.BH"),
+         sig = ifelse(month.p.BH <= 0.01, "yes", "no")) %>%
+  # Marginal effects
+  unnest(mem) %>%
+  group_by(MUNIC_MOV) %>%
+  mutate(pred_cntr = scale(predicted, scale = F), # Mean center at zero
+         pred_scale = scale(predicted, scale = T)) %>% ungroup () %>% # Mean center at zero, then scale
+  select(MUNIC_MOV, MES_CMPT = x, everything(), -group)
+
+modbr.m$MES_CMPT=factor(modbr.m$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+
+
+pMental<- ggplot(modbr.m, aes(x = MES_CMPT, y = pred_scale, group=MUNIC_MOV,color=MUNIC_MOV, line=sig.month)) + 
+  geom_line(size=1, aes(linetype=sig.month)) +
+   scale_linetype_manual(values=c("solid", "longdash", "dotted"), guide= "none")+
+  scale_color_brewer(palette="Set2",
+                     labels = c("Recife", "São Paulo", "Porto Alegre", "Brasília"),
+                     guide = guide_legend(
+                       override.aes = list(size=1.5),
+                       title = "Municipality",
+                       keywidth = 1,
+                       keyheight = 0.85,
+                       ncol = 2,
+                       order = 1)) +
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  labs(x = "month", y = "admissions \n (scaled and zero centered)") +
+  ggtitle("Mental Health")+
+  theme_bw() +
+  theme(legend.position = 'top',
+        title=element_text(size=10),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10))
+
+
+pMental
+```
+
+### Putting graphs and map together
+
+```{r}
+
+pAsthma=pAsthma + theme (legend.position = "none", axis.text.x  = element_blank(), axis.ticks.x = element_blank()) 
+pMental=pMental + theme (legend.position = "none")
+
+
+(pAsthma/pMental) + plot_layout(axes  = "collect_y", guides="collect")
+
+(((pAsthma/pMental)+ plot_layout(axes  = "collect_y"))|brazil_map) + plot_layout(axis_titles  = "collect")
+
+ggsave("scaled and map.jpg")
+```

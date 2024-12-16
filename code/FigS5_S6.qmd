@@ -1,0 +1,1016 @@
+---
+title: "Annotations plots"
+format: html
+editor: visual
+---
+
+## **Packages**
+
+```{r}
+library(RColorBrewer)
+library(viridis)
+library(tidyverse)
+library(broom)
+library(mgcv)
+library(ggeffects)
+library(patchwork)
+library(paletteer)
+library(ggthemes)
+```
+
+## **Loading Data**
+
+### **Annotation datasets**
+
+```{r}
+
+setwd("C:/Users/TACNZ4/OneDrive - cchmc/Brazil seasonality data")
+
+meantemp= read.table("monthly temperature.txt", header=TRUE)
+
+meanprecip= read.table("monthly precipitation.txt", header=TRUE)
+
+daylength=read.table("daylength minutes.txt", header=TRUE)
+
+school= read.table("school breaks.txt", header=TRUE)
+```
+
+### **Datasus datasets**
+
+```{r}
+setwd("C:/Users/TACNZ4/OneDrive - cchmc/Datasus seasonality")
+dados.sp=read_rds("dadossp.rds")
+dados.pe=read_rds("dadospe.rds")
+dados.df=read_rds("dadosdf.rds")
+dados.rs=read_rds("dadosrs.rds")
+```
+
+## **Preparing data**
+
+### **Ordering months (July -\>June) - Environmental Variables**
+
+```{r}
+
+
+meantemp$Month=factor(meantemp$Month, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+meanprecip$Month=factor(meanprecip$Month, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+daylength$Month=factor(daylength$Month, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+school$Month=factor(school$Month, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+
+```
+
+### **Annotations by location**
+
+```{r}
+#São paulo
+tempsp <- meantemp|>
+  select(Month, SP)
+precipsp <-  meanprecip|>
+  select(Month, SP)
+daysp <-  daylength|>
+  select(Month, SP)
+schoolsp <-  school|>
+  select(Month, SP)
+
+#Porto Alegre
+temppoa <- meantemp|>
+  select(Month, POA)
+precippoa <-  meanprecip|>
+  select(Month, POA)
+daypoa <-  daylength|>
+  select(Month, POA)
+schoolpoa <-  school|>
+  select(Month, POA)
+
+#Brasilia
+tempbra <- meantemp|>
+  select(Month, Brasilia)
+precipbra <-  meanprecip|>
+  select(Month, Brasilia)
+daybra <-  daylength|>
+  select(Month, Brasilia)
+schoolbra <-  school|>
+  select(Month, Brasilia)
+
+#Recife
+temprec <- meantemp|>
+  select(Month, Recife)
+preciprec <-  meanprecip|>
+  select(Month, Recife)
+dayrec <-  daylength|>
+  select(Month, Recife)
+schoolrec <-  school|>
+  select(Month, Recife)
+
+```
+
+### **Separating dataSUS by location, age and emergencies**
+
+```{r}
+
+#### São paulo
+### Only São Paulo municipality (code 355030)
+spdata= dados.sp %>%
+  subset(MUNIC_MOV==c("355030")) 
+### filter 0-18 y.o.
+## COD_IDADE is the measuring unit for age. 4=years, 3=months, 2=days
+# IDADE is age
+spdata= spdata %>%
+  subset((COD_IDADE=="4" & IDADE <=18)|(COD_IDADE=="3"))
+### Only emergencies
+## CAR_INT is the type of admission. "02" is urgency/emergency
+spdata= spdata %>%
+  subset(CAR_INT==c("02"))
+## Selecting relevant variables:
+spdata<- spdata|>
+  select(MES_CMPT, ANO_CMPT, DIAG_PRINC,DT_INTER, DT_SAIDA, MUNIC_MOV)
+
+
+#### Porto Alegre
+### Only Porto Alegre municipality (code 431490)
+poadata= dados.rs %>%
+  subset(MUNIC_MOV==c("431490")) 
+### filter 0-18 y.o.
+## COD_IDADE is the measuring unit for age. 4=years, 3=months, 2=days
+# IDADE is age
+poadata= poadata %>%
+  subset((COD_IDADE=="4" & IDADE <=18)|(COD_IDADE=="3"))
+### Only emergencies
+## CAR_INT is the type of admission. "02" is urgency/emergency
+poadata= poadata %>%
+  subset(CAR_INT=="02")
+## Selecting relevant variables:
+poadata<- poadata|>
+  select(MES_CMPT, ANO_CMPT, DIAG_PRINC,DT_INTER, DT_SAIDA, MUNIC_MOV)
+
+
+#### Brasilia
+### Only Brasilia municipality (code 530010)
+bradata= dados.df %>%
+  subset(MUNIC_MOV==c("530010")) 
+### filter 0-18 y.o.
+## COD_IDADE is the measuring unit for age. 4=years, 3=months, 2=days
+# IDADE is age
+bradata= bradata%>%
+  subset((COD_IDADE=="4" & IDADE <=18)|(COD_IDADE=="3"))
+### Only emergencies
+## CAR_INT is the type of admission. "02" is urgency/emergency
+bradata= bradata %>%
+  subset(CAR_INT=="02")
+## Selecting relevant variables:
+bradata<- bradata|>
+  select(MES_CMPT, ANO_CMPT, DIAG_PRINC,DT_INTER, DT_SAIDA, MUNIC_MOV)
+
+#### Recife
+### Only Recife municipality (code 530010)
+recdata= dados.pe %>%
+  subset(MUNIC_MOV==c("261160")) 
+### filter 0-18 y.o.
+## COD_IDADE is the measuring unit for age. 4=years, 3=months, 2=days
+# IDADE is age
+recdata= recdata%>%
+  subset((COD_IDADE=="4" & IDADE <=18)|(COD_IDADE=="3"))
+### Only emergencies
+## CAR_INT is the type of admission. "02" is urgency/emergency
+recdata= recdata %>%
+  subset(CAR_INT=="02")
+## Selecting relevant variables:
+recdata<- recdata|>
+  select(MES_CMPT, ANO_CMPT, DIAG_PRINC,DT_INTER, DT_SAIDA, MUNIC_MOV)
+
+```
+
+### **Subsetting Asthma**
+
+```{r}
+### Asthma ICDs - Choose all ICDs that have "J45"
+## DIAG_PRINC is the ICD10 code for the main diagnosis at admission
+
+# São Paulo
+asthmasp= spdata %>%
+  subset(str_detect(DIAG_PRINC, "J45"))
+
+# Porto Alegre
+asthmapoa= poadata %>%
+  subset(str_detect(DIAG_PRINC, "J45"))
+
+# Brasilia
+asthmabra= bradata %>%
+  subset(str_detect(DIAG_PRINC, "J45"))
+
+# Recife
+asthmarec= recdata %>%
+  subset(str_detect(DIAG_PRINC, "J45"))
+
+```
+
+### **Subsetting Mental Health**
+
+```{r}
+### Mental Health ICDs - Choose all ICDs that have "F"
+
+# São Paulo
+mentalsp= spdata %>%
+  subset(str_detect(DIAG_PRINC, "F"))
+
+# Porto Alegre
+mentalpoa= poadata %>%
+  subset(str_detect(DIAG_PRINC, "F"))
+
+# Brasilia
+mentalbra= bradata %>%
+  subset(str_detect(DIAG_PRINC, "F"))
+
+# Recife
+mentalrec= recdata %>%
+  subset(str_detect(DIAG_PRINC, "F"))
+
+```
+
+## **Creating the environmental annotation plots**
+
+### **São Paulo**
+
+```{r}
+# Temperature plot
+ptempSP= ggplot(tempsp, aes(x = factor(Month), y = 1, fill=SP)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange-Blue Diverging", direction=-1, limits=c(14,28))+
+  #scale_fill_viridis(option="turbo")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="Temperature (oC)"))+
+labs(x = "month", y = "Temperature") +
+  theme_void()+
+  theme(legend.position = "right",
+        legend.title = element_text(),
+        legend.text = element_text(), 
+        axis.title.x = element_text(),
+        axis.text.x = element_text(),
+        axis.title.y = element_text())
+ptempSP 
+
+# Precipitation plot
+pprecipSP= ggplot(precipsp, aes(x = factor(Month), y = 1, fill=SP)) + 
+  geom_tile() +
+  scale_fill_gradient(low= "white", high="darkseagreen4", limits=c(0,400))+
+  labs(x = " ", y = "Precipitation") +
+  guides(fill=guide_legend(title="Precipitation (mm)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+
+
+pprecipSP 
+
+
+# Daylength plot
+pdaySP= ggplot(daysp, aes(x = factor(Month), y = 1, fill=SP)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange Light", direction=1, limits=c(610,850))+
+  labs(x = " ", y = "Daylength") +
+  guides(fill=guide_legend(title="Daylenght (min)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pdaySP 
+
+
+# School breaks plot
+pschoolSP= ggplot(schoolsp, aes(x = factor(Month), y = 1, fill=SP)) + 
+  geom_tile() +
+  scale_fill_grey(start = 1, end = 0.4)+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="School Breaks"))+
+  labs(x = " ", y = "School Breaks") +
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pschoolSP
+```
+
+### **Porto Alegre**
+
+```{r}
+# Temperature plot
+ptemppoa= ggplot(temppoa, aes(x = factor(Month), y = 1, fill=POA)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange-Blue Diverging", direction=-1, limits=c(14,28))+
+  #scale_fill_viridis(option="turbo")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="Temperature (oC)"))+
+labs(x = "month", y = "Temperature") +
+  theme_void()+
+  theme(legend.position = "right",
+        legend.title = element_text(),
+        legend.text = element_text(), 
+        axis.title.x = element_text(),
+        axis.text.x = element_text(),
+        axis.title.y = element_text())
+ptemppoa 
+
+# Precipitation plot
+pprecippoa= ggplot(precippoa, aes(x = factor(Month), y = 1, fill=POA)) + 
+  geom_tile() +
+  scale_fill_gradient(low= "white", high="darkseagreen4", limits=c(0,400))+
+  #scale_fill_viridis(option="brewer blues")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  labs(x = " ", y = "Precipitation") +
+  guides(fill=guide_legend(title="Precipitation (mm)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+
+
+pprecippoa 
+
+
+# Daylength plot
+pdaypoa= ggplot(daypoa, aes(x = factor(Month), y = 1, fill=POA)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange Light", direction=1, limits=c(610,850))+
+  labs(x = " ", y = "Daylength") +
+  guides(fill=guide_legend(title="Daylenght (min)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pdaypoa 
+
+
+# School breaks plot
+pschoolpoa= ggplot(schoolpoa, aes(x = factor(Month), y = 1, fill=POA)) + 
+  geom_tile() +
+  scale_fill_grey(start = 1, end = 0.4)+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="School Breaks"))+
+  labs(x = " ", y = "School Breaks") +
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pschoolpoa
+```
+
+### **Brasilia**
+
+```{r}
+# Temperature plot
+ptempbra= ggplot(tempbra, aes(x = factor(Month), y = 1, fill=Brasilia)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange-Blue Diverging", direction=-1, limits=c(14,28))+
+  #scale_fill_viridis(option="turbo")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="Temperature (oC)"))+
+labs(x = "month", y = "Temperature") +
+  theme_void()+
+  theme(legend.position = "right",
+        legend.title = element_text(),
+        legend.text = element_text(), 
+        axis.title.x = element_text(),
+        axis.text.x = element_text(),
+        axis.title.y = element_text())
+ptempbra 
+
+# Precipitation plot
+pprecipbra= ggplot(precipbra, aes(x = factor(Month), y = 1, fill=Brasilia)) + 
+  geom_tile() +
+  scale_fill_gradient(low= "white", high="darkseagreen4", limits=c(0,400))+
+  #scale_fill_viridis(option="brewer blues")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  labs(x = " ", y = "Precipitation") +
+  guides(fill=guide_legend(title="Precipitation (mm)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+
+
+pprecipbra
+
+
+# Daylength plot
+pdaybra= ggplot(daybra, aes(x = factor(Month), y = 1, fill=Brasilia)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange Light", direction=1, limits=c(610,850))+
+  labs(x = " ", y = "Daylength") +
+  guides(fill=guide_legend(title="Daylenght (min)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pdaybra 
+
+
+# School breaks plot
+pschoolbra= ggplot(schoolbra, aes(x = factor(Month), y = 1, fill=Brasilia)) + 
+  geom_tile() +
+  scale_fill_grey(start = 1, end = 0.4)+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="School Breaks"))+
+  labs(x = " ", y = "School Breaks") +
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pschoolbra
+
+
+```
+
+### **Recife**
+
+```{r}
+# Temperature plot
+ptemprec= ggplot(temprec, aes(x = factor(Month), y = 1, fill=Recife)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange-Blue Diverging", direction=-1, limits=c(14,28))+
+  #scale_fill_viridis(option="turbo")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="Temperature (oC)"))+
+labs(x = "month", y = "Temperature") +
+  theme_void()+
+  theme(legend.position = "right",
+        legend.title = element_text(),
+        legend.text = element_text(), 
+        axis.title.x = element_text(),
+        axis.text.x = element_text(),
+        axis.title.y = element_text())
+ptemprec
+
+# Precipitation plot
+ppreciprec= ggplot(preciprec, aes(x = factor(Month), y = 1, fill=Recife)) + 
+  geom_tile() +
+  scale_fill_gradient(low= "white", high="darkseagreen4", limits=c(0,400))+
+  #scale_fill_viridis(option="brewer blues")+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  labs(x = " ", y = "Precipitation") +
+  guides(fill=guide_legend(title="Precipitation (mm)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+
+
+ppreciprec
+
+
+# Daylength plot
+pdayrec= ggplot(dayrec, aes(x = factor(Month), y = 1, fill=Recife)) + 
+  geom_tile() +
+  scale_fill_paletteer_c("ggthemes::Orange Light", direction=1, limits=c(610,850))+
+ # scale_x_discrete(breaks = seq(1,12, by = 1),
+  #                 labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+   #                           "aug", "sep", "oct", "nov", "dec"),
+    #               guide = guide_axis(n.dodge = 2)) +
+  labs(x = " ", y = "Daylength") +
+  guides(fill=guide_legend(title="Daylenght (min)"))+
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pdayrec 
+
+
+# School breaks plot
+pschoolrec= ggplot(schoolrec, aes(x = factor(Month), y = 1, fill=Recife)) + 
+  geom_tile() +
+  scale_fill_grey(start = 1, end = 0.4)+
+  scale_x_discrete(breaks = seq(1,12, by = 1),
+                   labels = c("jan", "feb", "mar", "apr", "may", "jun", "jul",
+                              "aug", "sep", "oct", "nov", "dec"),
+                   guide = guide_axis(n.dodge = 2)) +
+  guides(fill=guide_legend(title="School Breaks"))+
+  labs(x = " ", y = "School Breaks") +
+  theme_void()+ 
+  theme(legend.title = element_text(), axis.title.y = element_text())
+pschoolrec
+```
+
+## **Creating the average admission plots - Asthma**
+
+### **São Paulo**
+
+```{r}
+freqssp <- asthmasp |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqssp$MES_CMPT=factor(freqssp$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pSP <- ggplot(freqssp) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  ylim(0,350)+
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("São Paulo")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+ annotate("text", x = Inf, y = Inf, label = c("PTR=1.72"), hjust = 1.1, vjust = 2, size = 4)
+pSP
+```
+
+### **Porto Alegre**
+
+```{r}
+freqspoa <- asthmapoa |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqspoa$MES_CMPT=factor(freqssp$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pPOA <- ggplot(freqspoa) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+    ylim(0,230)+
+  ggtitle("Porto Alegre")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+   annotate("text", x = Inf, y = Inf, label = c("PTR=3.71"), hjust = 1.1, vjust = 2, size = 4)
+
+pPOA
+```
+
+### **Brasilia**
+
+```{r}
+freqsbra <- asthmabra |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqsbra$MES_CMPT=factor(freqsbra$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pBRA <- ggplot(freqsbra) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("Brasilia")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+    ylim(0,120)+
+     annotate("text", x = Inf, y = Inf, label = c("PTR=2.09"), hjust = 1.1, vjust = 2, size = 4)
+
+pBRA
+```
+
+### **Recife**
+
+```{r}
+freqsrec <- asthmarec |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqsrec$MES_CMPT=factor(freqsrec$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pREC <- ggplot(freqsrec) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("Recife")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+    ylim(0,140)+
+     annotate("text", x = Inf, y = Inf, label = c("PTR=1.38"), hjust = 1.1, vjust = 2, size = 4)
+pREC
+
+```
+
+## **Creating the average admission plots - Mental health**
+
+### **São Paulo**
+
+```{r}
+freqssp.mental <- mentalsp |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqssp.mental$MES_CMPT=factor(freqssp.mental$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pSP.mental <- ggplot(freqssp.mental) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("São Paulo")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+    ylim(0,65)+
+     annotate("text", x = Inf, y = Inf, label = c("PTR=1.21"), hjust = 1.1, vjust = 2, size = 4)
+
+pSP.mental
+```
+
+### **Porto Alegre**
+
+```{r}
+freqspoa.mental <- mentalpoa |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqspoa.mental$MES_CMPT=factor(freqspoa.mental$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pPOA.mental <- ggplot(freqspoa.mental) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("Porto Alegre")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+    ylim(0,45)+
+     annotate("text", x = Inf, y = Inf, label = c("PTR=1.22"), hjust = 1.1, vjust = 2, size = 4)
+
+pPOA.mental
+```
+
+### **Brasilia**
+
+```{r}
+freqsbra.mental <- mentalbra |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqsbra.mental$MES_CMPT=factor(freqsbra.mental$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pBRA.mental <- ggplot(freqsbra.mental) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("Brasilia")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+    ylim(0,30)+
+     annotate("text", x = Inf, y = Inf, label = c("PTR=1.23"), hjust = 1.1, vjust = 2, size = 4)
+
+pBRA.mental
+```
+
+### **Recife**
+
+```{r}
+freqsrec.mental <- mentalrec |> 
+  mutate(across(.cols = c('MES_CMPT'), as.factor)) |> 
+  group_by(MUNIC_MOV, MES_CMPT, .drop = FALSE)|> 
+  summarise(n = n())|>
+  ungroup() |> 
+  mutate(MES_CMPT= as.numeric(MES_CMPT)) |> 
+  left_join(days <- tibble(
+    MES_CMPT = seq(1, 12, 1),
+    DAYS = c(31, 28.25, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31),
+    ADJUST = max(DAYS)/DAYS), by = 'MES_CMPT') |> 
+  mutate(DAY_AVG_ADM = round(n/DAYS/12, digits = 3), # Avg per day
+         MONTH_AVG_ADM = round(n*ADJUST/12, digits = 2), # Avg per month
+         MONTH_COUNT_ADM = round(n*ADJUST, digits = 0)) # Total per month
+
+freqsrec.mental$MES_CMPT=factor(freqsrec.mental$MES_CMPT, levels=c(7,8,9,10,11,12,1,2,3,4,5,6))
+
+pREC.mental <- ggplot(freqsrec.mental) + 
+  geom_bar(aes(MES_CMPT, weight= MONTH_AVG_ADM, alpha=.6), color="gray") +
+  scale_size_manual(values = c(0.75, 0.15), guide = 'none') +
+  labs(x = "month", y = "average monthly admissions") +
+  ggtitle("Recife")+
+  theme_bw() +
+  theme(legend.position = 'none',
+        panel.grid.major = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 15),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(b = -7, l = -40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.x = element_blank())+
+    ylim(0,23)+
+     annotate("text", x = Inf, y = Inf, label = c("PTR=1.47"), hjust = 1.1, vjust = 2, size = 4)
+
+pREC.mental
+```
+
+## **Creating patches for annotations**
+
+```{r}
+# São Paulo
+patchsp= (pschoolSP +  
+            theme (axis.title.y = element_blank(), legend.position = "none"))/
+  (pdaySP +  
+     theme (axis.title.y = element_blank(), legend.position = "none"))/
+  (pprecipSP +  
+     theme (axis.title.y = element_blank(), legend.position = "none"))/
+  ( ptempSP +  
+      theme (axis.title.y = element_blank(), legend.position = "none")) 
+
+# Porto Alegre
+patchpoa= (pschoolpoa +  
+            theme (legend.position = "none"))/
+  (pdaypoa +  
+     theme (legend.position = "none"))/
+  (pprecippoa +  
+     theme (legend.position = "none"))/
+  ( ptemppoa +  
+      theme (legend.position = "none")) 
+
+# Brasilia
+patchbra= (pschoolbra +  
+            theme (axis.title.y = element_blank(), legend.position = "none"))/
+  (pdaybra +  
+     theme (axis.title.y = element_blank(), legend.position = "none"))/
+  (pprecipbra +  
+     theme (axis.title.y = element_blank(), legend.position = "none"))/
+  ( ptempbra +  
+      theme (axis.title.y = element_blank(), legend.position = "none")) 
+
+# Recife
+patchrec= (pschoolrec +  
+            theme (axis.title.y = element_blank()))/
+  (pdayrec +  
+     theme (axis.title.y = element_blank()))/
+  (ppreciprec +  
+     theme (axis.title.y = element_blank()))/
+  ( ptemprec +  
+      theme (axis.title.y = element_blank())) 
+
+
+```
+
+## **Assembling Asthma plots**
+
+```{r}
+((pPOA/
+    patchpoa +  plot_layout(heights = c(2, 1))) |
+((pSP+  theme (axis.title.y = element_blank()))/
+       patchsp  + plot_layout(heights = c(2, 1))) |
+((pBRA+  theme (axis.title.y = element_blank()))/
+       patchbra  + plot_layout(heights = c(2, 1))) |
+((pREC+  theme (axis.title.y = element_blank()))/
+       patchrec  + plot_layout(heights = c(2, 1), guides="collect"))) + plot_annotation(title = 'Asthma', theme = theme(plot.title = element_text(size = 16) ))
+
+ggsave("asthma_annotations.jpg", width = 12, height = 7)
+```
+
+## **Assembling Mental Health plots**
+
+```{r}
+((pPOA.mental/
+    patchpoa +  plot_layout(heights = c(2, 1))) |
+((pSP.mental+  theme (axis.title.y = element_blank()))/
+       patchsp  + plot_layout(heights = c(2, 1))) |
+((pBRA.mental+  theme (axis.title.y = element_blank()))/
+       patchbra  + plot_layout(heights = c(2, 1))) |
+((pREC.mental+  theme (axis.title.y = element_blank()))/
+       patchrec  + plot_layout(heights = c(2, 1), guides="collect")) ) +
+  plot_annotation(title = 'Mental Health', theme = theme(plot.title = element_text(size = 16) ))
+
+ggsave("mental_annotations.jpg", width = 12, height = 7)
+```
+
+## **Calculating Effect size**
+
+### **Peak-Minus-Trough**
+
+```{r}
+
+#### Asthma
+
+magsp.asthma=mean(sort(freqssp$MONTH_COUNT_ADM)[11]+sort(freqssp$MONTH_COUNT_ADM)[12])-mean(sort(freqssp$MONTH_COUNT_ADM)[1]+sort(freqssp$MONTH_COUNT_ADM)[2])
+#2689
+
+magpoa.asthma=mean(sort(freqspoa$MONTH_COUNT_ADM)[11]+sort(freqspoa$MONTH_COUNT_ADM)[12])-mean(sort(freqspoa$MONTH_COUNT_ADM)[1]+sort(freqspoa$MONTH_COUNT_ADM)[2])
+#3247
+
+magbra.asthma=mean(sort(freqsbra$MONTH_COUNT_ADM)[11]+sort(freqsbra$MONTH_COUNT_ADM)[12])-mean(sort(freqsbra$MONTH_COUNT_ADM)[1]+sort(freqsbra$MONTH_COUNT_ADM)[2])
+#1213
+
+magrec.asthma=mean(sort(freqsrec$MONTH_COUNT_ADM)[11]+sort(freqsrec$MONTH_COUNT_ADM)[12])-mean(sort(freqsrec$MONTH_COUNT_ADM)[1]+sort(freqsrec$MONTH_COUNT_ADM)[2])
+#880
+
+
+#Adjusted by total admissions
+magsp.asthma/sum(freqssp$MONTH_COUNT_ADM)
+#0.08352488
+
+magpoa.asthma/sum(freqspoa$MONTH_COUNT_ADM)
+#0.1977707
+
+magbra.asthma/sum(freqsbra$MONTH_COUNT_ADM)
+#0.1220076
+
+magrec.asthma/sum(freqsrec$MONTH_COUNT_ADM)
+#0.05055728
+
+
+
+#### Mental Health
+
+magsp.mental=mean(sort(freqssp.mental$MONTH_COUNT_ADM)[11]+sort(freqssp.mental$MONTH_COUNT_ADM)[12])-mean(sort(freqssp.mental$MONTH_COUNT_ADM)[1]+sort(freqssp.mental$MONTH_COUNT_ADM)[2])
+#247
+
+magpoa.mental=mean(sort(freqspoa.mental$MONTH_COUNT_ADM)[11]+sort(freqspoa.mental$MONTH_COUNT_ADM)[12])-mean(sort(freqspoa.mental$MONTH_COUNT_ADM)[1]+sort(freqspoa.mental$MONTH_COUNT_ADM)[2])
+#182
+
+magbra.mental=mean(sort(freqsbra.mental$MONTH_COUNT_ADM)[11]+sort(freqsbra.mental$MONTH_COUNT_ADM)[12])-mean(sort(freqsbra.mental$MONTH_COUNT_ADM)[1]+sort(freqsbra.mental$MONTH_COUNT_ADM)[2])
+#242
+
+magrec.mental=mean(sort(freqsrec.mental$MONTH_COUNT_ADM)[11]+sort(freqsrec.mental$MONTH_COUNT_ADM)[12])-mean(sort(freqsrec.mental$MONTH_COUNT_ADM)[1]+sort(freqsrec.mental$MONTH_COUNT_ADM)[2])
+#135
+
+
+#Adjusted by total admissions
+magsp.mental/sum(freqssp.mental$MONTH_COUNT_ADM)
+#0.02177952
+
+magpoa.mental/sum(freqspoa.mental$MONTH_COUNT_ADM)
+#0.03165606
+
+magbra.mental/sum(freqsbra.mental$MONTH_COUNT_ADM)
+#0.03134309
+
+magrec.mental/sum(freqsrec.mental$MONTH_COUNT_ADM)
+#0.01705699
+```
+
+### **Peak-Trough-Ratio**
+
+ptrpoa.mental
+
+```{r}
+
+### Asthma
+ptrsp.asthma=mean(sort(freqssp$MONTH_COUNT_ADM)[11]+sort(freqssp$MONTH_COUNT_ADM)[12])/mean(sort(freqssp$MONTH_COUNT_ADM)[1]+sort(freqssp$MONTH_COUNT_ADM)[2])
+#1.718024
+
+ptrpoa.asthma=mean(sort(freqspoa$MONTH_COUNT_ADM)[11]+sort(freqspoa$MONTH_COUNT_ADM)[12])/mean(sort(freqspoa$MONTH_COUNT_ADM)[1]+sort(freqspoa$MONTH_COUNT_ADM)[2])
+#3.70809
+
+ptrbra.asthma=mean(sort(freqsbra$MONTH_COUNT_ADM)[11]+sort(freqsbra$MONTH_COUNT_ADM)[12])/mean(sort(freqsbra$MONTH_COUNT_ADM)[1]+sort(freqsbra$MONTH_COUNT_ADM)[2])
+#2.086918
+
+ptrrec.asthma=mean(sort(freqsrec$MONTH_COUNT_ADM)[11]+sort(freqsrec$MONTH_COUNT_ADM)[12])/mean(sort(freqsrec$MONTH_COUNT_ADM)[1]+sort(freqsrec$MONTH_COUNT_ADM)[2])
+#1.380623
+
+### Mental  Health
+ptrsp.mental=mean(sort(freqssp.mental$MONTH_COUNT_ADM)[11]+sort(freqssp.mental$MONTH_COUNT_ADM)[12])/mean(sort(freqssp.mental$MONTH_COUNT_ADM)[1]+sort(freqssp.mental$MONTH_COUNT_ADM)[2])
+#1.212199
+
+ptrpoa.mental=mean(sort(freqspoa.mental$MONTH_COUNT_ADM)[11]+sort(freqspoa.mental$MONTH_COUNT_ADM)[12])/mean(sort(freqspoa.mental$MONTH_COUNT_ADM)[1]+sort(freqspoa.mental$MONTH_COUNT_ADM)[2])
+#1.224969
+
+ptrbra.mental=mean(sort(freqsbra.mental$MONTH_COUNT_ADM)[11]+sort(freqsbra.mental$MONTH_COUNT_ADM)[12])/mean(sort(freqsbra.mental$MONTH_COUNT_ADM)[1]+sort(freqsbra.mental$MONTH_COUNT_ADM)[2])
+# 1.233051
+
+ptrrec.mental=mean(sort(freqsrec.mental$MONTH_COUNT_ADM)[11]+sort(freqsrec.mental$MONTH_COUNT_ADM)[12])/mean(sort(freqsrec.mental$MONTH_COUNT_ADM)[1]+sort(freqsrec.mental$MONTH_COUNT_ADM)[2])
+#1.477032
+```
+
+**Population size:**
+
+**São Paulo: 11,451,999**
+
+**Porto Alegre: 1.332.845**
+
+**Brasilia: 2.817.381**
+
+**Recife: 1.488.920**
